@@ -4,6 +4,7 @@ Application designed to analyze and visualize the global network of airports and
 ----------------------
 
 How to run this app locally?
+
 git clone https://github.com/your-username/JetGrid.git
 cd JetGrid
 
