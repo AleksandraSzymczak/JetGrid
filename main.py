@@ -1,204 +1,135 @@
 import networkx as nx
-import polars as pl
-import csv
 from typing import List
 import matplotlib.pyplot as plt
 import streamlit as st
 import folium
+from config import FLIGHT_HEADERS, AIRPORT_HEADERS, RAW_DATA_PATHS, OUTPUT_DATA_PATHS
+from src.preprocessing.raw_data_preprocessing import (
+    load_raw_data_to_csv, 
+    preprocess__data,
+)
+from src.AirportNetwork import AirportNetwork
+import yaml
+from src.components.ui_metrics import (
+    generate_countries_list,
+    metrics_display
+)
+from src.components.map_generator import generate_map
+from src.tabs.experiments import experiment_tab_flow
 
-
-
-class AirportNetwork:
-    def load_data(self, airports_csv_path, flights_csv_path):
-        self.airports = pl.read_csv(
-            airports_csv_path,
-            null_values=["\\N", ""],
-            ignore_errors=True
-        )
-        self.flights = pl.read_csv(
-            flights_csv_path,
-            null_values=["\\N", ""],
-            ignore_errors=True
-        )
+@st.cache_data
+def load_and_preprocess_data():
+    """Load and preprocess data with caching to avoid reloading"""
+    load_raw_data_to_csv(
+        raw_data_path=RAW_DATA_PATHS['flights'],
+        output_data_path=OUTPUT_DATA_PATHS['flights'],
+        headers=FLIGHT_HEADERS
+    )
     
-    def prepare_vertices(self):
-        # Prepare vertices (airports)
-        self.vertices = self.airports.select([
-            pl.col("IATA Code").alias("iata_code"),
-            pl.col("Airport Name").alias("name"),
-            pl.col("City").alias("city"),
-            pl.col("Country").alias("country"),
-            pl.col("Latitude").alias("latitude"),
-            pl.col("Longitude").alias("longitude")
-        ]).drop_nulls(subset=["iata_code"]).unique(subset=["iata_code"])
-
-    def prepare_edges(self):
-        # Prepare edges (flights)
-        self.edges = self.flights.select([
-            pl.col("Flight Code").alias("flight_code"),
-            pl.col("Departure").alias("departure"),
-            pl.col("Departure Code").alias("departure_code"),
-            pl.col("Arrival").alias("arrival"),
-            pl.col("Arrival Code").alias("arrival_code"),
-            pl.col("Status").alias("status"),
-            pl.col("Flight Type").alias("flight_type")
-        ]).drop_nulls(subset=["flight_code"]).unique(subset=["flight_code"])
-
-    def build_graph(self):
-        # Filter out nodes without coordinates
-        self.vertices = self.vertices.filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null())
-        self.graph = nx.from_pandas_edgelist(
-            self.edges.to_pandas(),
-            source="departure_code",
-            target="arrival_code",
-            edge_attr=True,
-            create_using=nx.DiGraph()
-        )
-        for row in self.vertices.iter_rows():
-            iata_code = row[0]
-            attrs = {
-                "name": row[1],
-                "city": row[2],
-                "country": row[3],
-                "latitude": row[4],
-                "longitude": row[5]
-            }
-            if iata_code in self.graph:
-                self.graph.nodes[iata_code].update(attrs)
-            else:
-                self.graph.add_node(iata_code, **attrs)
-
-def load_raw_data_to_csv(raw_data_path: str, output_data_path: str, headers: List):
-    # read raw data
-    with open(raw_data_path, "r") as f:
-        readers = csv.reader(f)
-        data = [row for row in readers]
-    # save data to csv
-    with open(output_data_path, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(headers)
-        writer.writerows(data)
-
-
-def main():
-    g = nx.Graph()
-
-
-if __name__ == "__main__":
-    headers = [
-        'Flight Code',
-        'Flight Number',
-        'Departure',
-        'Departure Code',
-        'Arrival',
-        'Arrival Code',
-        'Unknown',
-        'Status',
-        'Flight Type'
-    ]
     load_raw_data_to_csv(
-        raw_data_path="raw_data/flight_data.txt",
-        output_data_path="data/flight_data.csv",
-        headers=headers
+        raw_data_path=RAW_DATA_PATHS['airports'],
+        output_data_path=OUTPUT_DATA_PATHS['airports'],
+        headers=AIRPORT_HEADERS
     )
-    headers = [
-        "ID",
-        "Airport Name",
-        "City",
-        "Country",
-        "IATA Code",
-        "ICAO Code",
-        "Latitude",
-        "Longitude",
-        "Altitude (ft)",
-        "Timezone Offset",
-        "Location Type",
-        "Timezone",
-        "Airport Type",
-        "Source"
-    ]
-    load_raw_data_to_csv(
-        raw_data_path="raw_data/airports.txt",
-        output_data_path="data/airports.csv",
-        headers=headers
+    
+    preprocess__data(
+        csv_flight_path=OUTPUT_DATA_PATHS['flights'],
+        output_flight_path=OUTPUT_DATA_PATHS['flights'],
+        csv_airport_path=OUTPUT_DATA_PATHS['airports'],
+        output_airport_path=OUTPUT_DATA_PATHS['airports']
     )
-    airport_network = AirportNetwork()
+    return True
+
+@st.cache_resource
+def build_airport_network(selected_countries):
+    """Build and cache airport network to prevent rebuilds"""
+    airport_network = AirportNetwork(filter_countries=selected_countries)
     airport_network.load_data(
-        airports_csv_path="data/airports.csv",
-        flights_csv_path="data/flight_data.csv"
+        airports_csv_path=OUTPUT_DATA_PATHS["airports"],
+        flights_csv_path=OUTPUT_DATA_PATHS["flights"]
     )
-    print(airport_network.airports.head())
-    print(airport_network.flights.head())
-
     airport_network.prepare_vertices()
     airport_network.prepare_edges()
-    print(airport_network.vertices.head())
-    print(airport_network.edges.head())
     airport_network.build_graph()
+    return airport_network
 
-    # Create position dictionary using longitude and latitude
-    pos = {}
-    nodes_without_coords = []
-    
-    for node in airport_network.graph.nodes():
-        if 'longitude' in airport_network.graph.nodes[node] and 'latitude' in airport_network.graph.nodes[node]:
-            lon = airport_network.graph.nodes[node]['longitude']
-            lat = airport_network.graph.nodes[node]['latitude']
-            if lon is not None and lat is not None:
-                pos[node] = (lon, lat)
-            else:
-                nodes_without_coords.append(node)
-        else:
-            nodes_without_coords.append(node)
-    
-    # Remove nodes without coordinates from the graph
-    print(f"Removing {len(nodes_without_coords)} nodes without coordinates")
-    airport_network.graph.remove_nodes_from(nodes_without_coords)
-    
-
-    plt.figure(figsize=(15, 10))
-    nx.draw(
-        airport_network.graph, 
-        pos=pos,
-        with_labels=False,  # Turn off labels for better visibility
-        node_size=30,
-        node_color='red',
-        edge_color='blue',
-        alpha=0.6,
+if __name__ == "__main__":
+    # Set page config FIRST
+    st.set_page_config(
+        page_title="Airport Network Analysis", 
+        layout="wide",
+        initial_sidebar_state="expanded"
     )
-    plt.show()
-    st.title("Airport Network Visualization")
-    st.write("Sample Airports Data:")
-st.dataframe(airport_network.vertices.head(10).to_pandas())
+    
+    # Load and preprocess data ONCE at startup
+    data_loaded = load_and_preprocess_data()
+    
+    # Sidebar navigation
+    st.sidebar.title("🛫 Navigation")
+    page = st.sidebar.selectbox(
+        "Choose a section:",
+        ["🗺️ Network Map", "📊 Analytics Dashboard", "🧪 Experiments", "ℹ️ More info"],
+        key="main_page_selector"
+    )
+    
+    if data_loaded:
+        # Generate country selection list    
+        selected_countries = generate_countries_list()
+        
+        # Convert to tuple for caching (lists aren't hashable)
+        countries_tuple = tuple(selected_countries) if selected_countries else None
+        
+        if selected_countries:
+            st.info(f"🔍 Building network for: {', '.join(selected_countries)}")
+        else:
+            st.info("🌐 Building global network (all countries)")
 
-st.write("Sample Flights Data:")
-st.dataframe(airport_network.edges.head(10).to_pandas())
+        # Build network only once per country selection (cached)
+        with st.spinner("Building airport network..."):
+            airport_network = build_airport_network(countries_tuple)
 
-st.write("Graph Info:")
-st.text(f"Number of nodes: {airport_network.graph.number_of_nodes()}")
-st.text(f"Number of edges: {airport_network.graph.number_of_edges()}")
+        # Generate map only once per network (cached)  
+        if 'map_generated' not in st.session_state or st.session_state.get('last_countries') != countries_tuple:
+            with st.spinner("Generating map..."):
+                generate_map(airport_network)
+                st.session_state.map_generated = True
+                st.session_state.last_countries = countries_tuple
 
-st.pyplot(plt)
-# Add dots for each airport
-# Create base map (centered on the world)
-m = folium.Map(location=[20, 0], zoom_start=2)
-for node in airport_network.graph.nodes():
-    folium.CircleMarker(
-        location=[airport_network.graph.nodes[node]["latitude"], airport_network.graph.nodes[node]["longitude"]],
-        radius=3,
-        popup=node,
-        color='blue',
-        fill=True,
-        fill_color='blue'
-    ).add_to(m)
+        # Read HTML map
+        try:
+            with open("airports_map.html", "r") as f:
+                html_content = f.read()
+        except FileNotFoundError:
+            html_content = "<p>Map not available</p>"
 
-import streamlit as st
+        # Display content based on selected page
+        if page == "🗺️ Network Map":
+            st.title("🗺️ Airport Network Visualization")
+            st.components.v1.html(html_content, height=600, scrolling=True)
 
-# ...existing code...
+        elif page == "🧪 Experiments":
+            st.title("🧪 Network Experiments")
+            experiment_tab_flow(airport_network)
 
-# Read HTML from a file
-with open("airports_map.html", "r") as f:
-    html_content = f.read()
+        elif page == "📊 Analytics Dashboard":
+            st.title("📊 Analytics Dashboard")
+            metrics_display(airport_network)
 
-# Display HTML in Streamlit
-st.components.v1.html(html_content, height=600, scrolling=True)
+        elif page == "ℹ️ More info":
+            st.title("ℹ️ About This Application")
+            st.markdown("""
+
+            This application visualizes and analyzes a global network of airports and flights using Streamlit and NetworkX.
+
+            **Data Sources:**
+            - Flight and Airport data sourced from https://openflights.org/data
+
+            Data is not up-to-date and is used for demonstration purposes only - this is state from 2009,
+                        only commercial flights with IATA codes are included.
+            """)
+            st.write("**Sample Airports Data:**")
+            st.dataframe(airport_network.vertices.head(10).to_pandas())
+            st.write("**Sample Flights Data:**")
+            st.dataframe(airport_network.edges.head(10).to_pandas())
+    else:
+        st.error("❌ Failed to load data. Please check your data files.")
