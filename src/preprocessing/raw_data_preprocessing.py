@@ -1,5 +1,4 @@
 import csv
-from turtle import pd
 from typing import List, Set
 import polars as pl
 import yaml
