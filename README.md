@@ -5,17 +5,17 @@ How to run this app locally?
 git clone https://github.com/your-username/JetGrid.git
 cd JetGrid
 
-# Windows
+Windows
 python -m venv venv
 venv\Scripts\activate
 
-# Mac/Linux
+Mac/Linux
 python3 -m venv venv
 source venv/bin/activate
 
 pip install -r requirements.txt
 
 streamlit run main.py
-
+-----------------------
 Link to the web-page:
 https://aleksandraszymczak-jetgrid-main-o5h8xc.streamlit.app
